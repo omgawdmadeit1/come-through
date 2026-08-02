@@ -2,24 +2,28 @@
 
 Cut in with corrected speech — priority messages for family on iPhone.
 
-## What it is
+## Live
 
-Hold to talk, fix what you said, then send. The other phone plays your clear message over headphones without starting a phone call.
+**https://come-through.vercel.app**
 
-## Use it
+## How to use (both iPhones)
 
-1. Open the deployed site on both iPhones
-2. Create a room (or join with a code)
-3. Tap once to allow priority playback
-4. Hold to talk → correct → **Cut in**
+1. Open the link above on each phone
+2. Enter your name → **Create room** (or join with a code)
+3. Share the room link/code with the other phone
+4. Tap **Allow priority playback** once
+5. When both show **Live with…**, hold to talk → correct → **Cut in**
+
+## Add to Home Screen (iPhone)
+
+Safari → Share → **Add to Home Screen** → name it **Come Through**
+
+## Modes
+
+- **Corrected** — clear spoken text (best for quick family messages)
+- **My voice** — short voice clip
+- **Both** — your voice, then the corrected wording
 
 ## Stack
 
-TanStack Start, React, WebRTC P2P, Vite, Tailwind
-
-## Local
-
-```bash
-npm install
-npm run dev
-```
+TanStack Start · React · WebRTC P2P · Vite · Tailwind
