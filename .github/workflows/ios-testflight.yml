@@ -167,5 +167,7 @@ jobs:
           name: ComeThrough-ipa
           path: |
             build/*.ipa
+            build/*.p12
+            build/*.cer
           if-no-files-found: ignore
           retention-days: 14
