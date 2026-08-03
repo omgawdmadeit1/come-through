@@ -44,8 +44,8 @@ platform :ios do
       build_number: build_number.to_s
     )
 
-    # Automatic signing: identity must stay "Apple Development" for the archive.
-    # App Store / Distribution identity is applied at export time by gym.
+    # Automatic signing: identity must be Apple Development for archive.
+    # App Store identity is applied at export by gym.
     update_code_signing_settings(
       use_automatic_signing: true,
       path: project,
@@ -58,10 +58,12 @@ platform :ios do
     auth_key_path = ENV["AUTH_KEY_PATH"].to_s.strip
     UI.user_error!("AUTH_KEY_PATH missing") if auth_key_path.empty? || !File.exist?(auth_key_path)
 
+    # Quote CODE_SIGN_IDENTITY — unquoted "Apple Development" is parsed as
+    # two tokens and xcodebuild errors: Unknown build action 'Development'.
     xcargs = [
       "DEVELOPMENT_TEAM=#{team_id}",
       "CODE_SIGN_STYLE=Automatic",
-      'CODE_SIGN_IDENTITY=Apple Development',
+      'CODE_SIGN_IDENTITY="Apple Development"',
       "-allowProvisioningUpdates",
       "-allowProvisioningDeviceRegistration",
       "-authenticationKeyPath", Shellwords.escape(auth_key_path),
