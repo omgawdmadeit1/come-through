@@ -10,15 +10,14 @@ npm install
 npm run dev
 ```
 
-## App Store / TestFlight (Mac + Apple Developer account)
-Full instructions: [APP_STORE.md](./APP_STORE.md)
+## TestFlight (Windows + GitHub — no Mac required)
 
-```bash
-bash scripts/ios/bootstrap-mac.sh
-```
+Full guide: [APP_STORE.md](./APP_STORE.md)
 
-Then in Xcode: select your Team → Archive → Upload to App Store Connect.
+1. Add four GitHub Actions secrets (`APPLE_TEAM_ID`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_KEY_P8`)
+2. Actions → **iOS TestFlight** → **Run workflow**
+3. Install from TestFlight on both iPhones
 
-- Bundle ID: `app.comethrough.family`
-- Privacy: https://come-through.vercel.app/privacy
-- Support: https://come-through.vercel.app/support
+Bundle ID: `app.comethrough.family`  
+Privacy: https://come-through.vercel.app/privacy  
+Support: https://come-through.vercel.app/support

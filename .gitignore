@@ -1,14 +1,13 @@
-node_modules/
-.output/
-dist/
-.vercel/
-.tanstack/
-.nitro/
-.wrangler/
-*.log
-.DS_Store
-.DS_Store?
-artifacts/
-screenshots/
-deploy-*.json
-.deploy*
+
+# iOS / Fastlane CI local
+vendor/bundle/
+build/
+*.ipa
+*.dSYM.zip
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output/
+**/AuthKey_*.p8
+*.p12
+*.mobileprovision

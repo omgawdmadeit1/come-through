@@ -1,82 +1,99 @@
-# Come Through — App Store build (your Apple Developer account)
+# Come Through — TestFlight / App Store (Windows + GitHub)
 
-You already have a working web app at **https://come-through.vercel.app**.  
-This repo also contains a **native iOS shell** (Capacitor) so you can ship **Come Through** on the App Store / TestFlight with your Apple Developer membership.
+You ship from **Windows**. I prepare the iOS project here; **GitHub Actions (macOS runners)** does the Xcode archive and TestFlight upload. No Mac on your desk required for the build.
 
-## What’s already prepared
+**Live web app:** https://come-through.vercel.app  
+**Repo:** https://github.com/omgawdmadeit1/come-through  
+**Bundle ID:** `app.comethrough.family`
 
-| Item | Location |
+---
+
+## One-time setup (about 10 minutes, Windows browser)
+
+### 1. App Store Connect API key
+1. Open [App Store Connect → Users and Access → Integrations → App Store Connect API](https://appstoreconnect.apple.com/access/integrations/api)
+2. **Generate** a key with **App Manager** (or Admin)
+3. Download the `.p8` once (Apple only shows it once)
+4. Copy:
+   - **Key ID**
+   - **Issuer ID**
+   - Full `.p8` text (including `BEGIN PRIVATE KEY` / `END PRIVATE KEY`)
+
+### 2. Team ID
+Apple Developer → [Membership details](https://developer.apple.com/account#MembershipDetailsCard) → **Team ID** (10 characters)
+
+### 3. Create the app record (if missing)
+App Store Connect → **My Apps → +**  
+- Name: **Come Through**  
+- Bundle ID: **app.comethrough.family** (register in Certificates, Identifiers & Profiles if needed)  
+- SKU: `come-through`  
+- Privacy Policy: https://come-through.vercel.app/privacy  
+
+### 4. Add GitHub secrets (repo settings)
+https://github.com/omgawdmadeit1/come-through/settings/secrets/actions
+
+| Secret | Value |
 | --- | --- |
-| iOS Xcode project | `ios/` (bundle id `app.comethrough.family`) |
-| Capacitor config | `capacitor.config.ts` → loads production URL |
-| Mic / speech privacy strings | `ios/App/App/Info.plist` |
-| Privacy Nutrition file | `ios/App/App/PrivacyInfo.xcprivacy` |
-| App icons | `ios/App/App/Assets.xcassets/AppIcon.appiconset` |
-| Store listing copy | `appstore/metadata/en-US/` |
-| Screenshots | `appstore/screenshots/en-US/` |
-| Icon 1024 | `appstore/icon-1024.png` |
-| Privacy Policy (live) | https://come-through.vercel.app/privacy |
-| Support (live) | https://come-through.vercel.app/support |
-| One-command Mac setup | `scripts/ios/bootstrap-mac.sh` |
+| `APPLE_TEAM_ID` | 10-char Team ID |
+| `APPLE_API_KEY_ID` | Key ID |
+| `APPLE_API_ISSUER_ID` | Issuer UUID |
+| `APPLE_API_KEY_P8` | Entire `.p8` file contents |
 
-> App Store **signing and upload must be done on a Mac** with Xcode, signed into **your** Apple Developer account. That cannot be completed from this cloud builder.
+---
 
-## On your Mac (about 15–25 minutes)
+## Ship a TestFlight build (Windows)
 
-### 1. Get the project
-```bash
-git clone https://github.com/omgawdmadeit1/come-through.git
-cd come-through
+1. Open **Actions** → **iOS TestFlight**  
+   https://github.com/omgawdmadeit1/come-through/actions/workflows/ios-testflight.yml  
+2. **Run workflow** → type a short changelog → Run  
+3. Wait ~15–25 minutes (macOS runner + archive + upload)  
+4. On your iPhones: **TestFlight** app → install **Come Through**
+
+Or from a tag:
+```text
+git tag ios-v1.0.1
+git push origin ios-v1.0.1
 ```
 
-### 2. Bootstrap & open Xcode
-```bash
-bash scripts/ios/bootstrap-mac.sh
-```
-This installs deps (if needed), syncs Capacitor, installs icons/permissions, and opens Xcode.
+---
 
-### 3. Sign with your team
-In Xcode → **App** target → **Signing & Capabilities**:
-1. Check **Automatically manage signing**
-2. **Team:** your Apple Developer team
-3. Confirm **Bundle Identifier:** `app.comethrough.family`  
-   - If Apple says it’s taken, change to e.g. `com.YOURNAME.comethrough` and use the same id in App Store Connect
+## What the workflow does
+1. `npm ci` + Capacitor iOS sync  
+2. Injects Team ID + mic/speech privacy strings  
+3. Fastlane archives with App Store Connect API signing  
+4. Uploads IPA to TestFlight  
+5. Saves IPA as a GitHub Actions artifact  
 
-### 4. Archive & upload
-1. Destination: **Any iOS Device (arm64)**
-2. **Product → Archive**
-3. **Distribute App → App Store Connect → Upload**
+Files:
+- `.github/workflows/ios-testflight.yml`
+- `fastlane/Fastfile`
+- `ios/` (Xcode project)
+- Store listing copy: `appstore/metadata/en-US/`
 
-### 5. App Store Connect listing
-1. [appstoreconnect.apple.com](https://appstoreconnect.apple.com) → **My Apps → +**
-2. Name: **Come Through**
-3. Bundle ID: match Xcode
-4. Paste copy from `appstore/metadata/en-US/`
-5. Upload screenshots from `appstore/screenshots/en-US/`
-6. Privacy Policy URL: `https://come-through.vercel.app/privacy`
-7. Support URL: `https://come-through.vercel.app/support`
-8. Fill **App Privacy** labels using `appstore/AppStore-checklist.md`
-9. Submit for **TestFlight** first, then App Review
+---
 
-## Review notes (paste into App Store Connect)
+## After TestFlight is green → App Review
+1. Fill listing from `appstore/metadata/en-US/`  
+2. Screenshots: `appstore/screenshots/en-US/`  
+3. Support: https://come-through.vercel.app/support  
+4. Privacy: https://come-through.vercel.app/privacy  
+5. Submit the same build for App Review  
 
+Review notes:
 ```
 Come Through is a private two-device utility for family cut-ins.
-
-Demo:
-1. Install on two iPhones (or device + second phone).
-2. Phone A: enter name → Create room → copy code.
-3. Phone B: enter name → paste code → Join.
-4. Hold Talk on A, release, optionally edit text, Send.
-5. Phone B plays the priority message.
-
-No login. No purchases. Microphone is requested when starting talk.
-Privacy: https://come-through.vercel.app/privacy
+1. Two iPhones in TestFlight
+2. Phone A: name → Create room → code
+3. Phone B: name → Join
+4. Hold Talk → edit → Send → priority play on B
+No login. No purchases. Mic used only when holding Talk.
 ```
 
-## After you ship
-- TestFlight with both iPhones (16 Pro Max + 14 Pro Max)
-- Keep the room open on both devices when testing cut-ins
-- Web + App Store builds share the same production backend
+---
 
-Questions or a blocked signing step: say what Xcode shows and we can adjust the project.
+## Optional: local Mac
+`bash scripts/ios/bootstrap-mac.sh` if you ever want Xcode on a Mac. Not required for TestFlight when secrets are set.
+
+## If a build fails
+- Open the failed Actions run → share the red error lines  
+- Common: missing secrets, bundle ID not registered, API key role too low, first-time agreement not accepted in App Store Connect  

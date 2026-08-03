@@ -1,0 +1,4 @@
+# Come Through Appfile — values overridden by ENV in CI
+app_identifier("app.comethrough.family")
+apple_id(ENV["APPLE_ID"]) if ENV["APPLE_ID"]
+team_id(ENV["APPLE_TEAM_ID"]) if ENV["APPLE_TEAM_ID"]
