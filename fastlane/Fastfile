@@ -44,30 +44,30 @@ platform :ios do
       build_number: build_number.to_s
     )
 
+    # Automatic signing: identity must stay "Apple Development" for the archive.
+    # App Store / Distribution identity is applied at export time by gym.
     update_code_signing_settings(
       use_automatic_signing: true,
       path: project,
       team_id: team_id,
       bundle_identifier: bundle_id,
-      code_sign_identity: "iPhone Distribution",
+      code_sign_identity: "Apple Development",
       targets: ["App"]
     )
 
-    # Put auth key path in ENV for xcodebuild; avoid embedding secrets in a fragile shell string
     auth_key_path = ENV["AUTH_KEY_PATH"].to_s.strip
     UI.user_error!("AUTH_KEY_PATH missing") if auth_key_path.empty? || !File.exist?(auth_key_path)
 
-    # Use xcargs without putting the team id next to other tokens incorrectly —
-    # pass DEVELOPMENT_TEAM as a discrete build setting via gym's xcargs carefully.
-    xcargs_parts = [
+    xcargs = [
       "DEVELOPMENT_TEAM=#{team_id}",
       "CODE_SIGN_STYLE=Automatic",
+      'CODE_SIGN_IDENTITY=Apple Development',
       "-allowProvisioningUpdates",
       "-allowProvisioningDeviceRegistration",
-      "-authenticationKeyPath", auth_key_path,
+      "-authenticationKeyPath", Shellwords.escape(auth_key_path),
       "-authenticationKeyID", key_id,
       "-authenticationKeyIssuerID", issuer_id
-    ]
+    ].join(" ")
 
     build_app(
       project: project,
@@ -80,8 +80,7 @@ platform :ios do
       output_name: "ComeThrough.ipa",
       build_path: "build",
       derived_data_path: "build/DerivedData",
-      # join with spaces; Shellwords will protect paths with spaces if we escape the key path
-      xcargs: xcargs_parts.map { |p| p.include?("/") ? Shellwords.escape(p) : p }.join(" "),
+      xcargs: xcargs,
       export_team_id: team_id,
       export_options: {
         method: "app-store",
