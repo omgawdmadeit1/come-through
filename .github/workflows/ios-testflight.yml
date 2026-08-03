@@ -10,10 +10,6 @@ on:
         description: "What testers will see for this build"
         required: false
         default: "Come Through TestFlight build"
-      mark_latest:
-        description: "Also push marketing version bump note"
-        required: false
-        default: "false"
   push:
     tags:
       - "ios-v*"
@@ -28,42 +24,48 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     env:
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-      APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+      # Raw secrets (may include trailing newlines from Windows paste)
+      APPLE_TEAM_ID_RAW: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_API_KEY_ID_RAW: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER_ID_RAW: ${{ secrets.APPLE_API_ISSUER_ID }}
       APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
       CHANGELOG: ${{ github.event.inputs.changelog || 'Come Through TestFlight build' }}
       BUILD_NUMBER: ${{ github.run_number }}
-      # Capacitor / Node
       CI: true
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Require App Store Connect secrets
+      - name: Normalize Apple secrets (strip whitespace / newlines)
         run: |
+          # Windows paste often adds \r\n — that breaks xcodebuild (exit 127).
+          strip() { printf '%s' "$1" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
+          TEAM="$(strip "$APPLE_TEAM_ID_RAW")"
+          KEY_ID="$(strip "$APPLE_API_KEY_ID_RAW")"
+          ISSUER="$(strip "$APPLE_API_ISSUER_ID_RAW")"
+
           missing=0
-          for v in APPLE_TEAM_ID APPLE_API_KEY_ID APPLE_API_ISSUER_ID APPLE_API_KEY_P8; do
-            if [ -z "${!v}" ]; then
-              echo "::error::Missing repository secret: $v"
-              missing=1
-            fi
-          done
+          if [ -z "$TEAM" ]; then echo "::error::APPLE_TEAM_ID empty"; missing=1; fi
+          if [ -z "$KEY_ID" ]; then echo "::error::APPLE_API_KEY_ID empty"; missing=1; fi
+          if [ -z "$ISSUER" ]; then echo "::error::APPLE_API_ISSUER_ID empty"; missing=1; fi
+          if [ -z "$APPLE_API_KEY_P8" ]; then echo "::error::APPLE_API_KEY_P8 empty"; missing=1; fi
           if [ "$missing" -ne 0 ]; then
-            echo ""
-            echo "Add these once (from Windows browser) at:"
-            echo "  https://github.com/${{ github.repository }}/settings/secrets/actions"
-            echo ""
-            echo "  APPLE_TEAM_ID          → 10-char Team ID (Membership details)"
-            echo "  APPLE_API_KEY_ID       → App Store Connect API Key ID"
-            echo "  APPLE_API_ISSUER_ID    → Issuer ID (UUID)"
-            echo "  APPLE_API_KEY_P8       → full .p8 private key contents (including BEGIN/END lines)"
-            echo ""
-            echo "Create the API key: App Store Connect → Users and Access → Integrations → App Store Connect API"
+            echo "Add secrets at: https://github.com/${{ github.repository }}/settings/secrets/actions"
             exit 1
           fi
-          echo "Secrets present. Team=${APPLE_TEAM_ID} Key=${APPLE_API_KEY_ID}"
+
+          # Length-only diagnostics (never print secret values)
+          echo "APPLE_TEAM_ID length=${#TEAM}"
+          echo "APPLE_API_KEY_ID length=${#KEY_ID}"
+          echo "APPLE_API_ISSUER_ID length=${#ISSUER}"
+          echo "APPLE_API_KEY_P8 length=${#APPLE_API_KEY_P8}"
+
+          {
+            echo "APPLE_TEAM_ID=$TEAM"
+            echo "APPLE_API_KEY_ID=$KEY_ID"
+            echo "APPLE_API_ISSUER_ID=$ISSUER"
+          } >> "$GITHUB_ENV"
 
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
@@ -83,7 +85,6 @@ jobs:
         run: |
           npx cap sync ios
           node scripts/ios/apply-ios-permissions.mjs
-          # re-apply icons / privacy after sync
           if [ -d ios-assets/AppIcon.appiconset ]; then
             rm -rf ios/App/App/Assets.xcassets/AppIcon.appiconset
             cp -R ios-assets/AppIcon.appiconset ios/App/App/Assets.xcassets/AppIcon.appiconset
@@ -97,17 +98,33 @@ jobs:
           python3 - <<'PY'
           import os, pathlib, re
           team = os.environ["APPLE_TEAM_ID"].strip()
+          assert team and "\n" not in team and "\r" not in team, "bad team id"
           p = pathlib.Path("ios/App/App.xcodeproj/project.pbxproj")
           text = p.read_text()
+          # Always set DEVELOPMENT_TEAM on App target configs
           if "DEVELOPMENT_TEAM" in text:
               text = re.sub(r"DEVELOPMENT_TEAM = [^;]+;", f"DEVELOPMENT_TEAM = {team};", text)
-          else:
-              text = text.replace(
-                  "CODE_SIGN_STYLE = Automatic;",
-                  f"CODE_SIGN_STYLE = Automatic;\n\t\t\t\tDEVELOPMENT_TEAM = {team};",
-              )
-          p.write_text(text)
-          print("DEVELOPMENT_TEAM set to", team)
+          text = text.replace(
+              "CODE_SIGN_STYLE = Automatic;",
+              f"CODE_SIGN_STYLE = Automatic;\n\t\t\t\tDEVELOPMENT_TEAM = {team};",
+          )
+          # de-dupe if we double-injected
+          # leave as-is; Xcode tolerates last wins in some cases — clean duplicates:
+          lines = text.splitlines()
+          cleaned = []
+          for line in lines:
+              if "DEVELOPMENT_TEAM" in line and cleaned and "DEVELOPMENT_TEAM" in cleaned[-1]:
+                  cleaned[-1] = line  # keep latest
+                  continue
+              cleaned.append(line)
+          p.write_text("\n".join(cleaned) + "\n")
+          # verify
+          teams = [ln.strip() for ln in p.read_text().splitlines() if "DEVELOPMENT_TEAM" in ln]
+          print("DEVELOPMENT_TEAM lines:", len(teams))
+          for ln in teams:
+              # print length only of the value
+              val = ln.split("=",1)[-1].strip().rstrip(";")
+              print(" team value length=", len(val))
           PY
 
       - name: Setup Ruby / Fastlane
@@ -115,7 +132,6 @@ jobs:
         with:
           ruby-version: "3.3"
           bundler-cache: true
-          working-directory: .
 
       - name: Install Fastlane gems
         run: |
@@ -126,19 +142,20 @@ jobs:
       - name: Write AuthKey.p8 for xcodebuild
         run: |
           mkdir -p "$RUNNER_TEMP/private_keys"
-          # Support raw PEM or base64-encoded secret
           KEY_FILE="$RUNNER_TEMP/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
-          if printf '%s' "$APPLE_API_KEY_P8" | grep -q "BEGIN PRIVATE KEY"; then
-            printf '%s\n' "$APPLE_API_KEY_P8" > "$KEY_FILE"
+          # Normalize P8: strip CR, ensure trailing newline after END line
+          if printf '%s' "$APPLE_API_KEY_P8" | tr -d '\r' | grep -q "BEGIN PRIVATE KEY"; then
+            printf '%s' "$APPLE_API_KEY_P8" | tr -d '\r' > "$KEY_FILE"
+            # ensure file ends with newline
+            [ -n "$(tail -c1 "$KEY_FILE")" ] && echo >> "$KEY_FILE"
           else
-            printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$KEY_FILE"
+            printf '%s' "$APPLE_API_KEY_P8" | tr -d '\r\n' | base64 --decode > "$KEY_FILE"
           fi
           echo "AUTH_KEY_PATH=$KEY_FILE" >> "$GITHUB_ENV"
-          ls -la "$KEY_FILE"
+          # size only
+          wc -c "$KEY_FILE"
 
       - name: Fastlane beta → TestFlight
-        env:
-          AUTH_KEY_PATH: ${{ env.AUTH_KEY_PATH }}
         run: bundle exec fastlane ios beta
 
       - name: Upload IPA artifact
@@ -148,6 +165,5 @@ jobs:
           name: ComeThrough-ipa
           path: |
             build/*.ipa
-            build/*.xcarchive
           if-no-files-found: ignore
           retention-days: 14

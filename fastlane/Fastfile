@@ -1,20 +1,29 @@
+# Come Through — Fastlane (GitHub Actions macOS runner)
 require "shellwords"
-# Come Through — Fastlane
-# Used by .github/workflows/ios-testflight.yml (macOS runner).
-# Secrets via ENV — never commit keys.
 
 default_platform(:ios)
+
+def clean_env(key)
+  ENV.fetch(key).to_s.gsub("\r", "").strip
+end
 
 platform :ios do
   desc "Archive Come Through and upload to TestFlight"
   lane :beta do
     setup_ci if ENV["CI"]
 
-    team_id = ENV.fetch("APPLE_TEAM_ID")
-    key_id = ENV.fetch("APPLE_API_KEY_ID")
-    issuer_id = ENV.fetch("APPLE_API_ISSUER_ID")
-    key_content = ENV.fetch("APPLE_API_KEY_P8")
+    team_id = clean_env("APPLE_TEAM_ID")
+    key_id = clean_env("APPLE_API_KEY_ID")
+    issuer_id = clean_env("APPLE_API_ISSUER_ID")
+    key_content = ENV.fetch("APPLE_API_KEY_P8").to_s.gsub("\r", "")
     is_b64 = !key_content.include?("BEGIN PRIVATE KEY")
+
+    UI.user_error!("APPLE_TEAM_ID empty") if team_id.empty?
+    UI.user_error!("APPLE_API_KEY_ID empty") if key_id.empty?
+    UI.user_error!("APPLE_API_ISSUER_ID empty") if issuer_id.empty?
+    UI.user_error!("APPLE_API_KEY_P8 empty") if key_content.strip.empty?
+
+    UI.message("Team ID length=#{team_id.length} Key ID length=#{key_id.length}")
 
     api_key = app_store_connect_api_key(
       key_id: key_id,
@@ -29,7 +38,6 @@ platform :ios do
     scheme = "App"
     bundle_id = "app.comethrough.family"
 
-    # Unique build number per Actions run (or timestamp fallback)
     build_number = ENV["BUILD_NUMBER"] || ENV["GITHUB_RUN_NUMBER"] || Time.now.strftime("%Y%m%d%H%M")
     increment_build_number(
       xcodeproj: project,
@@ -41,18 +49,25 @@ platform :ios do
       path: project,
       team_id: team_id,
       bundle_identifier: bundle_id,
-      code_sign_identity: "Apple Distribution",
+      code_sign_identity: "iPhone Distribution",
       targets: ["App"]
     )
 
-    # Prefer explicit AuthKey path for -allowProvisioningUpdates
-    auth_key_path = ENV["AUTH_KEY_PATH"]
-    xcargs = "DEVELOPMENT_TEAM=#{team_id} -allowProvisioningUpdates"
-    if auth_key_path && File.exist?(auth_key_path)
-      xcargs += " -authenticationKeyPath #{Shellwords.escape(auth_key_path)}"
-      xcargs += " -authenticationKeyID #{key_id}"
-      xcargs += " -authenticationKeyIssuerID #{issuer_id}"
-    end
+    # Put auth key path in ENV for xcodebuild; avoid embedding secrets in a fragile shell string
+    auth_key_path = ENV["AUTH_KEY_PATH"].to_s.strip
+    UI.user_error!("AUTH_KEY_PATH missing") if auth_key_path.empty? || !File.exist?(auth_key_path)
+
+    # Use xcargs without putting the team id next to other tokens incorrectly —
+    # pass DEVELOPMENT_TEAM as a discrete build setting via gym's xcargs carefully.
+    xcargs_parts = [
+      "DEVELOPMENT_TEAM=#{team_id}",
+      "CODE_SIGN_STYLE=Automatic",
+      "-allowProvisioningUpdates",
+      "-allowProvisioningDeviceRegistration",
+      "-authenticationKeyPath", auth_key_path,
+      "-authenticationKeyID", key_id,
+      "-authenticationKeyIssuerID", issuer_id
+    ]
 
     build_app(
       project: project,
@@ -65,7 +80,9 @@ platform :ios do
       output_name: "ComeThrough.ipa",
       build_path: "build",
       derived_data_path: "build/DerivedData",
-      xcargs: xcargs,
+      # join with spaces; Shellwords will protect paths with spaces if we escape the key path
+      xcargs: xcargs_parts.map { |p| p.include?("/") ? Shellwords.escape(p) : p }.join(" "),
+      export_team_id: team_id,
       export_options: {
         method: "app-store",
         signingStyle: "automatic",
@@ -86,15 +103,5 @@ platform :ios do
     )
 
     UI.success("Uploaded build #{build_number} to TestFlight for #{bundle_id}")
-  end
-
-  desc "Validate signing/env without uploading"
-  lane :doctor do
-    UI.message("APPLE_TEAM_ID=#{ENV['APPLE_TEAM_ID']}")
-    UI.message("APPLE_API_KEY_ID=#{ENV['APPLE_API_KEY_ID']}")
-    UI.message("APPLE_API_ISSUER_ID=#{ENV['APPLE_API_ISSUER_ID']}")
-    UI.message("P8 present=#{!(ENV['APPLE_API_KEY_P8'].to_s.empty?)}")
-    UI.message("Project exists=#{File.exist?('ios/App/App.xcodeproj/project.pbxproj')}")
-    UI.message("Scheme exists=#{File.exist?('ios/App/App.xcodeproj/xcshareddata/xcschemes/App.xcscheme')}")
   end
 end
