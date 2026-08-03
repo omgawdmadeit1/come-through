@@ -15,14 +15,17 @@ def optional_env(key)
   ENV[key].to_s.gsub("\r", "").strip
 end
 
-def ensure_bundle_and_app!(bundle_id:, key_id:, issuer_id:, auth_key_path:)
+def connect_token!(key_id:, issuer_id:, auth_key_path:)
   token = Spaceship::ConnectAPI::Token.create(
     key_id: key_id,
     issuer_id: issuer_id,
     filepath: auth_key_path
   )
   Spaceship::ConnectAPI.token = token
+  token
+end
 
+def ensure_bundle_and_app!(bundle_id:)
   bid = Spaceship::ConnectAPI::BundleId.all(filter: { identifier: bundle_id }).first
   if bid.nil?
     UI.message("Creating Bundle ID #{bundle_id}…")
@@ -35,20 +38,36 @@ def ensure_bundle_and_app!(bundle_id:, key_id:, issuer_id:, auth_key_path:)
     UI.message("Bundle ID exists: #{bid.identifier}")
   end
 
-  if Spaceship::ConnectAPI::App.find(bundle_id).nil?
+  app = Spaceship::ConnectAPI::App.find(bundle_id)
+  if app.nil?
+    UI.message("Creating App Store Connect app Come Through…")
+    # Spaceship uses primary_locale (not language)
     begin
-      Spaceship::ConnectAPI::App.create(
+      app = Spaceship::ConnectAPI::App.create(
         name: "Come Through",
-        language: "en-US",
+        primary_locale: "en-US",
         bundle_id: bundle_id,
         sku: "come-through",
         platforms: ["IOS"]
       )
-      UI.success("Created App Store Connect app")
+      UI.success("Created ASC app id=#{app.id}")
     rescue => e
-      UI.important("App create: #{e.message}")
+      UI.important("App.create attempt 1: #{e.message}")
+      begin
+        app = Spaceship::ConnectAPI::App.create(
+          name: "Come Through",
+          bundle_id: bundle_id,
+          sku: "come-through-#{Time.now.to_i}"
+        )
+        UI.success("Created ASC app (fallback) id=#{app.id}")
+      rescue => e2
+        UI.user_error!("Could not create App Store Connect app: #{e2.message}")
+      end
     end
+  else
+    UI.message("ASC app exists: #{app.name} (#{app.id})")
   end
+  app
 end
 
 def import_p12_from_secret!(keychain_path:)
@@ -65,10 +84,68 @@ def import_p12_from_secret!(keychain_path:)
     keychain_path: keychain_path,
     keychain_password: ENV["KEYCHAIN_PASSWORD"] || ""
   )
-  UI.success("Imported Distribution .p12 from APPLE_DISTRIBUTION_P12_BASE64 secret")
+  UI.success("Imported Distribution .p12 from secrets")
   true
 ensure
-  FileUtils.rm_f(p12_path) if p12_path && File.exist?(p12_path)
+  FileUtils.rm_f(p12_path) if defined?(p12_path) && p12_path && File.exist?(p12_path)
+end
+
+def revoke_newest_distribution_cert!
+  dists = Spaceship::ConnectAPI::Certificate.all.select do |c|
+    t = c.certificate_type.to_s.upcase
+    t.include?("DISTRIBUTION")
+  end
+  UI.message("Distribution certs on account: #{dists.length}")
+  return if dists.empty?
+
+  # CI certs expire ~1y from create (later than older Tesla certs) — free a slot
+  victim = dists.max_by { |c| c.expiration_date.to_s }
+  UI.important("Revoking Distribution cert to free a slot: type=#{victim.certificate_type} exp=#{victim.expiration_date} id=#{victim.id}")
+  victim.delete!
+end
+
+def ensure_distribution_cert!(api_key:, keychain_path:)
+  return if import_p12_from_secret!(keychain_path: keychain_path)
+
+  begin
+    cert(
+      api_key: api_key,
+      development: false,
+      force: false,
+      generate_apple_certs: true,
+      keychain_path: keychain_path,
+      keychain_password: ENV["KEYCHAIN_PASSWORD"] || ""
+    )
+  rescue => e
+    UI.important("cert: #{e.message}")
+    if e.message.include?("maximum") || e.message.include?("Could not find the newly")
+      revoke_newest_distribution_cert!
+      cert(
+        api_key: api_key,
+        development: false,
+        force: false,
+        generate_apple_certs: true,
+        keychain_path: keychain_path,
+        keychain_password: ENV["KEYCHAIN_PASSWORD"] || ""
+      )
+    else
+      raise e
+    end
+  end
+
+  # Export p12 from keychain for artifact (password empty)
+  FileUtils.mkdir_p("build")
+  p12_out = "build/ComeThrough-Distribution.p12"
+  begin
+    sh(%Q{security find-identity -v -p codesigning #{keychain_path.shellescape} || true})
+    # Export all identities as p12 (CI keychain password empty)
+    sh(%Q{security export -k #{keychain_path.shellescape} -t identities -f pkcs12 -P "" -o #{p12_out.shellescape} || true})
+    UI.message("p12 export size=#{File.size?(p12_out) || 0}") if File.exist?(p12_out)
+  rescue => e
+    UI.important("p12 export: #{e.message}")
+  end
+  Dir.glob("*.p12").each { |f| FileUtils.cp(f, File.join("build", File.basename(f))) }
+  Dir.glob("*.cer").each { |f| FileUtils.cp(f, File.join("build", File.basename(f))) }
 end
 
 platform :ios do
@@ -103,58 +180,13 @@ platform :ios do
     auth_key_path = ENV["AUTH_KEY_PATH"].to_s.strip
     UI.user_error!("AUTH_KEY_PATH missing") if auth_key_path.empty? || !File.exist?(auth_key_path)
 
-    ensure_bundle_and_app!(
-      bundle_id: bundle_id,
-      key_id: key_id,
-      issuer_id: issuer_id,
-      auth_key_path: auth_key_path
-    )
+    connect_token!(key_id: key_id, issuer_id: issuer_id, auth_key_path: auth_key_path)
+    ensure_bundle_and_app!(bundle_id: bundle_id)
 
     keychain_path = File.expand_path("~/Library/Keychains/fastlane_tmp_keychain-db")
     keychain_path = File.expand_path("~/Library/Keychains/login.keychain-db") unless File.exist?(keychain_path)
 
-    # Prefer a Distribution .p12 stored in GitHub secrets (works every run).
-    # Fallback: create a new cert (fails if Apple team is at Distribution cert limit).
-    imported = import_p12_from_secret!(keychain_path: keychain_path)
-    unless imported
-      begin
-        cert(
-          api_key: api_key,
-          development: false,
-          force: false,
-          generate_apple_certs: true,
-          keychain_path: keychain_path,
-          keychain_password: ENV["KEYCHAIN_PASSWORD"] || ""
-        )
-      rescue => e
-        UI.error(e.message)
-        UI.user_error!(<<~MSG)
-          Cannot create/install an Apple Distribution certificate.
-
-          Apple only allows a few Distribution certs per team. Earlier CI runs
-          may have created certs whose private keys were lost (temporary runners).
-
-          Fix on Windows (about 3 minutes):
-          1) Open https://developer.apple.com/account/resources/certificates/list
-          2) Keep the Distribution cert Tesla Trek uses (if you know which).
-          3) Revoke extra "Apple Distribution" / "iOS Distribution" certs you do not have .p12 files for.
-          4) Reply "revoked" so we re-run — we will create ONE cert and save a .p12 for you.
-
-          OR if you already have Tesla Trek's Distribution .p12:
-          - Add secret APPLE_DISTRIBUTION_P12_BASE64 (base64 of the .p12 file)
-          - Add secret APPLE_DISTRIBUTION_P12_PASSWORD (password for that .p12)
-        MSG
-      end
-    end
-
-    sh("security find-identity -v -p codesigning #{keychain_path.shellescape} || true")
-
-    # Keep any generated .p12 so the workflow can upload it as an artifact
-    # (user should store as APPLE_DISTRIBUTION_P12_BASE64 for future runs)
-    FileUtils.mkdir_p("build")
-    Dir.glob("*.p12").each { |f| FileUtils.cp(f, File.join("build", File.basename(f))); UI.message("Saved #{f} → build/") }
-    Dir.glob("*.cer").each { |f| FileUtils.cp(f, File.join("build", File.basename(f))) }
-
+    ensure_distribution_cert!(api_key: api_key, keychain_path: keychain_path)
 
     profile_uuid = sigh(
       api_key: api_key,
@@ -218,6 +250,7 @@ platform :ios do
     upload_to_testflight(
       api_key: api_key,
       app_identifier: bundle_id,
+      ipa: "build/ComeThrough.ipa",
       skip_waiting_for_build_processing: true,
       distribute_external: false,
       notify_external_testers: false,
