@@ -1,19 +1,24 @@
 # Come Through
 
-Cut in with corrected speech — priority messages for family on iPhone.
+Cut in with corrected speech. Private rooms for family priority messages on iPhone.
 
-## Live app
+**Live app:** https://come-through.vercel.app
 
-**https://come-through.vercel.app**
+## Web
+```bash
+npm install
+npm run dev
+```
 
-## How to use (both iPhones)
+## App Store / TestFlight (Mac + Apple Developer account)
+Full instructions: [APP_STORE.md](./APP_STORE.md)
 
-1. Open the link on each phone
-2. Enter your name → **Create room** (or join with a code)
-3. Share the room with the other phone
-4. Tap **Allow priority playback** once
-5. When both show **Live with…**, hold to talk → correct → **Cut in**
+```bash
+bash scripts/ios/bootstrap-mac.sh
+```
 
-## Add to Home Screen
+Then in Xcode: select your Team → Archive → Upload to App Store Connect.
 
-Safari → Share → **Add to Home Screen** → name it **Come Through**
+- Bundle ID: `app.comethrough.family`
+- Privacy: https://come-through.vercel.app/privacy
+- Support: https://come-through.vercel.app/support
