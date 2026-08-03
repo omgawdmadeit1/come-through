@@ -40,8 +40,7 @@ def ensure_bundle_and_app!(bundle_id:)
 
   app = Spaceship::ConnectAPI::App.find(bundle_id)
   if app.nil?
-    UI.message("Creating App Store Connect app Come Through…")
-    # Spaceship uses primary_locale (not language)
+    UI.message("Trying to create App Store Connect app…")
     begin
       app = Spaceship::ConnectAPI::App.create(
         name: "Come Through",
@@ -52,17 +51,25 @@ def ensure_bundle_and_app!(bundle_id:)
       )
       UI.success("Created ASC app id=#{app.id}")
     rescue => e
-      UI.important("App.create attempt 1: #{e.message}")
-      begin
-        app = Spaceship::ConnectAPI::App.create(
-          name: "Come Through",
-          bundle_id: bundle_id,
-          sku: "come-through-#{Time.now.to_i}"
-        )
-        UI.success("Created ASC app (fallback) id=#{app.id}")
-      rescue => e2
-        UI.user_error!("Could not create App Store Connect app: #{e2.message}")
-      end
+      UI.important("API cannot create apps (need Admin role): #{e.message}")
+      UI.user_error!(<<~MSG)
+        App Store Connect app for '#{bundle_id}' does not exist yet.
+
+        Your API key can upload builds, but cannot CREATE apps.
+        Create the app once in the browser (2 minutes):
+
+        1) Open https://appstoreconnect.apple.com/apps
+        2) Click blue (+) → New App
+        3) Platforms: iOS
+        4) Name: Come Through
+        5) Primary Language: English (U.S.)
+        6) Bundle ID: select app.comethrough.family
+        7) SKU: come-through
+        8) User Access: Full Access
+        9) Create
+
+        Then reply "app created" and we re-run the upload.
+      MSG
     end
   else
     UI.message("ASC app exists: #{app.name} (#{app.id})")
@@ -98,7 +105,6 @@ def revoke_newest_distribution_cert!
   UI.message("Distribution certs on account: #{dists.length}")
   return if dists.empty?
 
-  # CI certs expire ~1y from create (later than older Tesla certs) — free a slot
   victim = dists.max_by { |c| c.expiration_date.to_s }
   UI.important("Revoking Distribution cert to free a slot: type=#{victim.certificate_type} exp=#{victim.expiration_date} id=#{victim.id}")
   victim.delete!
@@ -133,12 +139,10 @@ def ensure_distribution_cert!(api_key:, keychain_path:)
     end
   end
 
-  # Export p12 from keychain for artifact (password empty)
   FileUtils.mkdir_p("build")
   p12_out = "build/ComeThrough-Distribution.p12"
   begin
     sh(%Q{security find-identity -v -p codesigning #{keychain_path.shellescape} || true})
-    # Export all identities as p12 (CI keychain password empty)
     sh(%Q{security export -k #{keychain_path.shellescape} -t identities -f pkcs12 -P "" -o #{p12_out.shellescape} || true})
     UI.message("p12 export size=#{File.size?(p12_out) || 0}") if File.exist?(p12_out)
   rescue => e
