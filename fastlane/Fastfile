@@ -1,13 +1,18 @@
 # Come Through — Fastlane (GitHub Actions macOS runner)
-# Prefers Apple cloud automatic signing via App Store Connect API key
-# so we do not need a long-lived Distribution .p12 on Windows.
 require "shellwords"
 require "spaceship"
+require "base64"
+require "tmpdir"
+require "fileutils"
 
 default_platform(:ios)
 
 def clean_env(key)
   ENV.fetch(key).to_s.gsub("\r", "").strip
+end
+
+def optional_env(key)
+  ENV[key].to_s.gsub("\r", "").strip
 end
 
 def ensure_bundle_and_app!(bundle_id:, key_id:, issuer_id:, auth_key_path:)
@@ -26,14 +31,11 @@ def ensure_bundle_and_app!(bundle_id:, key_id:, issuer_id:, auth_key_path:)
       identifier: bundle_id,
       platform: "IOS"
     )
-    UI.success("Created Bundle ID")
   else
-    UI.message("Bundle ID already exists: #{bid.identifier}")
+    UI.message("Bundle ID exists: #{bid.identifier}")
   end
 
-  app = Spaceship::ConnectAPI::App.find(bundle_id)
-  if app.nil?
-    UI.message("Creating App Store Connect app…")
+  if Spaceship::ConnectAPI::App.find(bundle_id).nil?
     begin
       Spaceship::ConnectAPI::App.create(
         name: "Come Through",
@@ -42,13 +44,31 @@ def ensure_bundle_and_app!(bundle_id:, key_id:, issuer_id:, auth_key_path:)
         sku: "come-through",
         platforms: ["IOS"]
       )
-      UI.success("Created ASC app")
+      UI.success("Created App Store Connect app")
     rescue => e
       UI.important("App create: #{e.message}")
     end
-  else
-    UI.message("ASC app exists: #{app.name}")
   end
+end
+
+def import_p12_from_secret!(keychain_path:)
+  b64 = optional_env("APPLE_DISTRIBUTION_P12_BASE64")
+  return false if b64.empty?
+
+  password = optional_env("APPLE_DISTRIBUTION_P12_PASSWORD")
+  p12_path = File.join(Dir.tmpdir, "come_through_dist.p12")
+  File.binwrite(p12_path, Base64.decode64(b64.gsub(/\s+/, "")))
+
+  import_certificate(
+    certificate_path: p12_path,
+    certificate_password: password,
+    keychain_path: keychain_path,
+    keychain_password: ENV["KEYCHAIN_PASSWORD"] || ""
+  )
+  UI.success("Imported Distribution .p12 from APPLE_DISTRIBUTION_P12_BASE64 secret")
+  true
+ensure
+  FileUtils.rm_f(p12_path) if p12_path && File.exist?(p12_path)
 end
 
 platform :ios do
@@ -63,9 +83,6 @@ platform :ios do
     is_b64 = !key_content.include?("BEGIN PRIVATE KEY")
 
     UI.user_error!("APPLE_TEAM_ID empty") if team_id.empty?
-    UI.user_error!("APPLE_API_KEY_ID empty") if key_id.empty?
-    UI.user_error!("APPLE_API_ISSUER_ID empty") if issuer_id.empty?
-    UI.user_error!("APPLE_API_KEY_P8 empty") if key_content.strip.empty?
 
     api_key = app_store_connect_api_key(
       key_id: key_id,
@@ -93,24 +110,73 @@ platform :ios do
       auth_key_path: auth_key_path
     )
 
-    # Pure automatic signing — no local Distribution .p12.
-    # Do NOT set CODE_SIGN_IDENTITY (Development forces device-based profiles).
+    keychain_path = File.expand_path("~/Library/Keychains/fastlane_tmp_keychain-db")
+    keychain_path = File.expand_path("~/Library/Keychains/login.keychain-db") unless File.exist?(keychain_path)
+
+    # Prefer a Distribution .p12 stored in GitHub secrets (works every run).
+    # Fallback: create a new cert (fails if Apple team is at Distribution cert limit).
+    imported = import_p12_from_secret!(keychain_path: keychain_path)
+    unless imported
+      begin
+        cert(
+          api_key: api_key,
+          development: false,
+          force: false,
+          generate_apple_certs: true,
+          keychain_path: keychain_path,
+          keychain_password: ENV["KEYCHAIN_PASSWORD"] || ""
+        )
+      rescue => e
+        UI.error(e.message)
+        UI.user_error!(<<~MSG)
+          Cannot create/install an Apple Distribution certificate.
+
+          Apple only allows a few Distribution certs per team. Earlier CI runs
+          may have created certs whose private keys were lost (temporary runners).
+
+          Fix on Windows (about 3 minutes):
+          1) Open https://developer.apple.com/account/resources/certificates/list
+          2) Keep the Distribution cert Tesla Trek uses (if you know which).
+          3) Revoke extra "Apple Distribution" / "iOS Distribution" certs you do not have .p12 files for.
+          4) Reply "revoked" so we re-run — we will create ONE cert and save a .p12 for you.
+
+          OR if you already have Tesla Trek's Distribution .p12:
+          - Add secret APPLE_DISTRIBUTION_P12_BASE64 (base64 of the .p12 file)
+          - Add secret APPLE_DISTRIBUTION_P12_PASSWORD (password for that .p12)
+        MSG
+      end
+    end
+
+    sh("security find-identity -v -p codesigning #{keychain_path.shellescape} || true")
+
+    profile_uuid = sigh(
+      api_key: api_key,
+      app_identifier: bundle_id,
+      team_id: team_id,
+      provisioning_name: "Come Through AppStore CI",
+      ignore_profiles_with_different_name: true,
+      force: true,
+      skip_certificate_verification: true
+    )
+    profile_name = ENV["SIGH_NAME"] || "Come Through AppStore CI"
+
     update_code_signing_settings(
-      use_automatic_signing: true,
+      use_automatic_signing: false,
       path: project,
       team_id: team_id,
       bundle_identifier: bundle_id,
+      code_sign_identity: "iPhone Distribution",
+      profile_name: profile_name,
+      profile_uuid: profile_uuid,
       targets: ["App"]
     )
 
-    # Clear any forced identity lines that confuse automatic Release archives
-    sh(%Q{sed -i '' 's/CODE_SIGN_IDENTITY = ".*";/CODE_SIGN_IDENTITY = "";/g' #{project}/project.pbxproj || true})
-
     xcargs = [
       "DEVELOPMENT_TEAM=#{team_id}",
-      "CODE_SIGN_STYLE=Automatic",
+      "CODE_SIGN_STYLE=Manual",
+      'CODE_SIGN_IDENTITY="iPhone Distribution"',
+      "PROVISIONING_PROFILE_SPECIFIER=#{Shellwords.escape(profile_name)}",
       "-allowProvisioningUpdates",
-      "-allowProvisioningDeviceRegistration",
       "-authenticationKeyPath", Shellwords.escape(auth_key_path),
       "-authenticationKeyID", key_id,
       "-authenticationKeyIssuerID", issuer_id
@@ -131,8 +197,11 @@ platform :ios do
       export_team_id: team_id,
       export_options: {
         method: "app-store",
-        signingStyle: "automatic",
+        signingStyle: "manual",
         teamID: team_id,
+        provisioningProfiles: {
+          bundle_id => profile_name
+        },
         uploadSymbols: true,
         compileBitcode: false,
         thinning: "<none>"
