@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowRight, Headphones, MessageSquareText, Radio, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -136,9 +136,22 @@ export function ComeThroughHome() {
       </section>
 
       <footer className="mt-auto pt-8 pb-2 text-center text-xs leading-relaxed text-[var(--color-fg-subtle)]">
-        Add Come Through to your Home Screen for the fastest cut-ins.
-        <br />
         Works best when both iPhones keep the room open.
+        <br />
+        <span className="mt-2 inline-flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+          <Link
+            to="/support"
+            className="text-[var(--color-fg-muted)] underline-offset-2 hover:underline"
+          >
+            Support
+          </Link>
+          <Link
+            to="/privacy"
+            className="text-[var(--color-fg-muted)] underline-offset-2 hover:underline"
+          >
+            Privacy
+          </Link>
+        </span>
       </footer>
     </div>
   );

@@ -1,0 +1,6 @@
+First App Store release of Come Through.
+
+• Private rooms with shareable codes
+• Hold-to-talk with editable speech
+• Priority cut-in playback on the other phone
+• Support and Privacy pages in-app

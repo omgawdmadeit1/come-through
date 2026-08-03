@@ -41,23 +41,14 @@ import {
   type ThreadItem,
   type WireMsg,
 } from "@/lib/comethrough/types";
+import { hapticMedium } from "@/lib/native/capacitor";
 import { cn } from "@/lib/utils";
-
 const MAX_RECORD_MS = 12_000;
 const MAX_AUDIO_BYTES = 180_000;
-
 type Phase = "idle" | "holding" | "review" | "sending";
-
-export function ComeThroughSession({
-  code,
-  displayName,
-}: {
-  code: string;
-  displayName: string;
-}) {
+export function ComeThroughSession({ code, displayName }: { code: string; displayName: string }) {
   const room = roomIdFromCode(code);
   const p2p = useP2PRoom({ room, name: displayName });
-
   const [phase, setPhase] = useState<Phase>("idle");
   const [draft, setDraft] = useState<DraftMessage | null>(null);
   const [mode, setMode] = useState<DeliveryMode>("corrected");
@@ -69,7 +60,6 @@ export function ComeThroughSession({
   const [copied, setCopied] = useState(false);
   const [interim, setInterim] = useState("");
   const [liveText, setLiveText] = useState("");
-
   const recorderRef = useRef(createRecorder());
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const holdTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -78,21 +68,18 @@ export function ComeThroughSession({
   const finalsRef = useRef("");
   const playQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pointerActiveRef = useRef(false);
-
   const connectedPeer = useMemo(
     () => p2p.peers.find((p) => p.connectionState === "connected") ?? null,
     [p2p.peers],
   );
   const peerCount = p2p.peers.length;
   const linkReady = Boolean(connectedPeer);
-
   const clearHoldTimers = () => {
     if (holdTimerRef.current) clearInterval(holdTimerRef.current);
     if (maxTimerRef.current) clearTimeout(maxTimerRef.current);
     holdTimerRef.current = null;
     maxTimerRef.current = null;
   };
-
   const stopRecognition = () => {
     const rec = recognitionRef.current;
     recognitionRef.current = null;
@@ -105,12 +92,9 @@ export function ComeThroughSession({
     } catch {
       try {
         rec.abort();
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     }
   };
-
   const startRecognition = () => {
     const Ctor = getSpeechRecognitionCtor();
     if (!Ctor) return;
@@ -137,26 +121,18 @@ export function ComeThroughSession({
       setLiveText(finalBits);
       setInterim(interimBits.trim());
     };
-    rec.onerror = () => {
-      /* user can still type / send voice */
-    };
-    rec.onend = () => {
-      /* keep closed until next hold */
-    };
+    rec.onerror = () => {};
+    rec.onend = () => {};
     recognitionRef.current = rec;
     try {
       rec.start();
-    } catch {
-      /* already started */
-    }
+    } catch {}
   };
-
   const ensureAudio = useCallback(async () => {
     if (audioUnlocked) return;
     await unlockAudio();
     setAudioUnlocked(true);
   }, [audioUnlocked]);
-
   useEffect(() => {
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.getVoices();
@@ -165,7 +141,6 @@ export function ComeThroughSession({
       return () => window.speechSynthesis.removeEventListener?.("voiceschanged", onVoices);
     }
   }, []);
-
   useEffect(() => {
     return p2p.onMessage((from, data, channel) => {
       if (channel !== "reliable") return;
@@ -197,10 +172,8 @@ export function ComeThroughSession({
           return [item, ...prev].slice(0, 40);
         });
         setIncoming(item);
-
         const ack: WireMsg = { v: 1, type: "ack", id: data.id, fromName: displayName };
         p2p.send(ack, from);
-
         playQueueRef.current = playQueueRef.current
           .then(async () => {
             playPriorityChime();
@@ -208,9 +181,7 @@ export function ComeThroughSession({
               if (data.audioBase64 && data.audioMime) {
                 try {
                   await playAudioBlob(base64ToBlob(data.audioBase64, data.audioMime));
-                } catch {
-                  /* fall through to TTS */
-                }
+                } catch {}
               }
             }
             if (
@@ -219,9 +190,7 @@ export function ComeThroughSession({
             ) {
               try {
                 await speakText(data.text);
-              } catch {
-                /* ignore */
-              }
+              } catch {}
             }
           })
           .catch(() => {})
@@ -234,13 +203,11 @@ export function ComeThroughSession({
       }
     });
   }, [p2p, displayName]);
-
   useEffect(() => {
     if (!p2p.joined) return;
     const presence: WireMsg = { v: 1, type: "presence", name: displayName };
     p2p.send(presence);
   }, [p2p.joined, p2p.send, displayName, peerCount]);
-
   const beginHold = async () => {
     if (phase === "review" || phase === "sending" || phase === "holding") return;
     if (pointerActiveRef.current) return;
@@ -270,7 +237,6 @@ export function ComeThroughSession({
       setPhase("idle");
     }
   };
-
   const endHold = async () => {
     if (!pointerActiveRef.current && phase !== "holding") return;
     pointerActiveRef.current = false;
@@ -319,13 +285,11 @@ export function ComeThroughSession({
       setInterim("");
     }
   };
-
   const cancelDraft = () => {
     stopSpeaking();
     setDraft(null);
     setPhase("idle");
   };
-
   const sendDraft = async () => {
     if (!draft) return;
     if (!linkReady) {
@@ -366,6 +330,7 @@ export function ComeThroughSession({
       setThread((prev) => prev.map((x) => (x.id === id ? { ...x, status: "sent" } : x)));
       setDraft(null);
       setPhase("idle");
+      void hapticMedium();
       toast.success("Cut in sent");
     } catch {
       setThread((prev) => prev.map((x) => (x.id === id ? { ...x, status: "failed" } : x)));
@@ -373,7 +338,6 @@ export function ComeThroughSession({
       toast.error("Send failed — stay on this screen and try again.");
     }
   };
-
   const sendTypedOnly = async () => {
     if (phase === "review" && draft) {
       await sendDraft();
@@ -386,7 +350,6 @@ export function ComeThroughSession({
     });
     setPhase("review");
   };
-
   const copyLink = async () => {
     const url = `${typeof window !== "undefined" ? window.location.origin : ""}/room/${code}`;
     try {
@@ -398,7 +361,6 @@ export function ComeThroughSession({
       toast.message(`Share this code: ${code}`);
     }
   };
-
   const shareRoom = async () => {
     const url = `${typeof window !== "undefined" ? window.location.origin : ""}/room/${code}`;
     if (navigator.share) {
@@ -409,18 +371,14 @@ export function ComeThroughSession({
           url,
         });
         return;
-      } catch {
-        /* fall through */
-      }
+      } catch {}
     }
     await copyLink();
   };
-
   const dismissIncoming = () => {
     stopSpeaking();
     setIncoming(null);
   };
-
   const statusLabel = !p2p.joined
     ? "Connecting…"
     : linkReady
@@ -428,9 +386,7 @@ export function ComeThroughSession({
       : peerCount > 0
         ? "Linking phones…"
         : "Waiting for the other phone";
-
   const statusVariant = linkReady ? "live" : peerCount > 0 ? "accent" : "default";
-
   return (
     <div className="relative mx-auto flex min-h-dvh w-full max-w-lg flex-col safe-pad">
       <header className="flex items-start justify-between gap-3 pb-4">
@@ -460,16 +416,25 @@ export function ComeThroughSession({
             {statusLabel}
           </Badge>
           <div className="flex gap-2">
-            <Button variant="secondary" size="icon" onClick={() => void shareRoom()} aria-label="Share room">
+            <Button
+              variant="secondary"
+              size="icon"
+              onClick={() => void shareRoom()}
+              aria-label="Share room"
+            >
               <Share2 className="size-4" />
             </Button>
-            <Button variant="secondary" size="icon" onClick={() => void copyLink()} aria-label="Copy link">
+            <Button
+              variant="secondary"
+              size="icon"
+              onClick={() => void copyLink()}
+              aria-label="Copy link"
+            >
               {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
             </Button>
           </div>
         </div>
       </header>
-
       {!audioUnlocked && (
         <button
           type="button"
@@ -487,7 +452,6 @@ export function ComeThroughSession({
           </span>
         </button>
       )}
-
       <section className="mb-4 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-soft)]">
         <div className="flex items-start gap-3">
           <div className="flex size-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-bg-subtle)] text-[var(--color-accent)]">
@@ -501,7 +465,6 @@ export function ComeThroughSession({
             </p>
           </div>
         </div>
-
         <div className="mt-4 grid grid-cols-3 gap-2">
           {(
             [
@@ -531,7 +494,6 @@ export function ComeThroughSession({
           {mode === "both" && "Plays your voice, then the corrected wording."}
         </p>
       </section>
-
       <section className="mb-4 min-h-0 flex-1 overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
         <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
           <p className="text-sm font-medium text-[var(--color-fg)]">Thread</p>
@@ -573,7 +535,6 @@ export function ComeThroughSession({
           )}
         </div>
       </section>
-
       {phase === "review" && draft ? (
         <section className="mb-4 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 animate-cutin">
           <div className="mb-3 flex items-center justify-between">
@@ -690,14 +651,12 @@ export function ComeThroughSession({
               )}
             </button>
           </div>
-
           {(liveText || interim) && phase === "holding" && (
             <p className="mb-3 max-w-sm px-4 text-center text-sm text-[var(--color-fg-muted)]">
               <span className="text-[var(--color-fg)]">{liveText}</span>
               {interim ? <span className="opacity-60"> {interim}</span> : null}
             </p>
           )}
-
           <div className="flex w-full gap-2">
             <Button variant="secondary" className="flex-1" onClick={() => void sendTypedOnly()}>
               <Type className="size-4" />
@@ -717,7 +676,6 @@ export function ComeThroughSession({
           )}
         </section>
       )}
-
       {incoming && (
         <div
           className="fixed inset-0 z-50 flex items-end justify-center bg-[color-mix(in_oklab,var(--color-bg)_72%,transparent)] p-4 backdrop-blur-sm sm:items-center"

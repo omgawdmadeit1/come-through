@@ -1,0 +1,14 @@
+node_modules/
+.output/
+dist/
+.vercel/
+.tanstack/
+.nitro/
+.wrangler/
+*.log
+.DS_Store
+.DS_Store?
+artifacts/
+screenshots/
+deploy-*.json
+.deploy*

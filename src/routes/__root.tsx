@@ -1,12 +1,9 @@
 import type { ReactNode } from "react";
-import {
-  Outlet,
-  createRootRoute,
-  HeadContent,
-  Scripts,
-} from "@tanstack/react-router";
+import { useEffect } from "react";
+import { Outlet, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
 import { Toaster } from "sonner";
 import { CreatedWithGrokBanner } from "@/components/created-with-grok-banner";
+import { prepareNativeChrome } from "@/lib/native/capacitor";
 import appCss from "@/styles.css?url";
 
 export const Route = createRootRoute({
@@ -50,6 +47,10 @@ export const Route = createRootRoute({
 });
 
 function RootComponent() {
+  useEffect(() => {
+    void prepareNativeChrome();
+  }, []);
+
   return (
     <RootDocument>
       <CreatedWithGrokBanner />
