@@ -38,5 +38,13 @@ for (const [key, value] of Object.entries(pairs)) {
     );
   }
 }
+// Export compliance: only standard HTTPS / OS crypto (no custom encryption)
+if (!xml.includes("ITSAppUsesNonExemptEncryption")) {
+  xml = xml.replace(
+    /<\/dict>\s*<\/plist>\s*$/,
+    "\t<key>ITSAppUsesNonExemptEncryption</key>\n\t<false/>\n</dict>\n</plist>\n",
+  );
+}
+
 fs.writeFileSync(plistPath, xml);
 console.log("Patched", plistPath);

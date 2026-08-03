@@ -70,5 +70,7 @@
 	<string>Come Through can turn your speech into editable text before you send.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Come Through does not use the camera; this key satisfies web media permission prompts.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
