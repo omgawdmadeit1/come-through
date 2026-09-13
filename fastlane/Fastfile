@@ -140,16 +140,6 @@ def ensure_distribution_cert!(api_key:, keychain_path:)
   end
 
   FileUtils.mkdir_p("build")
-  p12_out = "build/ComeThrough-Distribution.p12"
-  begin
-    sh(%Q{security find-identity -v -p codesigning #{keychain_path.shellescape} || true})
-    sh(%Q{security export -k #{keychain_path.shellescape} -t identities -f pkcs12 -P "" -o #{p12_out.shellescape} || true})
-    UI.message("p12 export size=#{File.size?(p12_out) || 0}") if File.exist?(p12_out)
-  rescue => e
-    UI.important("p12 export: #{e.message}")
-  end
-  Dir.glob("*.p12").each { |f| FileUtils.cp(f, File.join("build", File.basename(f))) }
-  Dir.glob("*.cer").each { |f| FileUtils.cp(f, File.join("build", File.basename(f))) }
 end
 
 platform :ios do
