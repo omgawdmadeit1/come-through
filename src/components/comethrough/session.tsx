@@ -142,6 +142,16 @@ export function ComeThroughSession({ code, displayName }: { code: string; displa
     }
   }, []);
   useEffect(() => {
+    const recorder = recorderRef.current;
+    return () => {
+      pointerActiveRef.current = false;
+      clearHoldTimers();
+      stopRecognition();
+      recorder.cancel();
+      stopSpeaking();
+    };
+  }, []);
+  useEffect(() => {
     return p2p.onMessage((from, data, channel) => {
       if (channel !== "reliable") return;
       if (!isWireMsg(data)) return;
