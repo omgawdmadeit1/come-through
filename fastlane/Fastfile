@@ -97,19 +97,6 @@ ensure
   FileUtils.rm_f(p12_path) if defined?(p12_path) && p12_path && File.exist?(p12_path)
 end
 
-def revoke_newest_distribution_cert!
-  dists = Spaceship::ConnectAPI::Certificate.all.select do |c|
-    t = c.certificate_type.to_s.upcase
-    t.include?("DISTRIBUTION")
-  end
-  UI.message("Distribution certs on account: #{dists.length}")
-  return if dists.empty?
-
-  victim = dists.max_by { |c| c.expiration_date.to_s }
-  UI.important("Revoking Distribution cert to free a slot: type=#{victim.certificate_type} exp=#{victim.expiration_date} id=#{victim.id}")
-  victim.delete!
-end
-
 def ensure_distribution_cert!(api_key:, keychain_path:)
   return if import_p12_from_secret!(keychain_path: keychain_path)
 
@@ -125,14 +112,13 @@ def ensure_distribution_cert!(api_key:, keychain_path:)
   rescue => e
     UI.important("cert: #{e.message}")
     if e.message.include?("maximum") || e.message.include?("Could not find the newly")
-      revoke_newest_distribution_cert!
-      cert(
-        api_key: api_key,
-        development: false,
-        force: false,
-        generate_apple_certs: true,
-        keychain_path: keychain_path,
-        keychain_password: ENV["KEYCHAIN_PASSWORD"] || ""
+      # Never auto-revoke. The newest Distribution cert is usually the one
+      # other apps and TestFlight builds still use. Deleting it to free a
+      # slot bricks signing for the whole team.
+      UI.user_error!(
+        "Apple Distribution certificate slot is full. Import APPLE_DISTRIBUTION_P12_BASE64 " \
+        "or revoke an unused cert in the Apple Developer portal, then re-run. " \
+        "CI will not delete a team Distribution certificate."
       )
     else
       raise e
