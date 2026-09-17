@@ -33,6 +33,7 @@ import {
   getSpeechRecognitionCtor,
   type SpeechRecognitionLike,
 } from "@/lib/comethrough/speech";
+import { combineHoldTranscript } from "@/lib/comethrough/transcript";
 import {
   isWireMsg,
   roomIdFromCode,
@@ -66,6 +67,7 @@ export function ComeThroughSession({ code, displayName }: { code: string; displa
   const maxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdStartedRef = useRef(0);
   const finalsRef = useRef("");
+  const interimRef = useRef("");
   const playQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pointerActiveRef = useRef(false);
   const connectedPeer = useMemo(
@@ -100,6 +102,7 @@ export function ComeThroughSession({ code, displayName }: { code: string; displa
     if (!Ctor) return;
     stopRecognition();
     finalsRef.current = "";
+    interimRef.current = "";
     setLiveText("");
     setInterim("");
     const rec = new Ctor();
@@ -118,8 +121,9 @@ export function ComeThroughSession({ code, displayName }: { code: string; displa
         else interimBits += t;
       }
       finalsRef.current = finalBits;
+      interimRef.current = interimBits.trim();
       setLiveText(finalBits);
-      setInterim(interimBits.trim());
+      setInterim(interimRef.current);
     };
     rec.onerror = () => {};
     rec.onend = () => {};
@@ -222,6 +226,7 @@ export function ComeThroughSession({ code, displayName }: { code: string; displa
       setInterim("");
       setLiveText("");
       finalsRef.current = "";
+      interimRef.current = "";
       if (mode !== "voice") startRecognition();
       clearHoldTimers();
       holdTimerRef.current = setInterval(() => {
@@ -248,7 +253,7 @@ export function ComeThroughSession({ code, displayName }: { code: string; displa
     }
     try {
       const { blob, mime, durationMs } = await recorderRef.current.stop();
-      const transcript = `${finalsRef.current} ${interim}`.replace(/\s+/g, " ").trim();
+      const transcript = combineHoldTranscript(finalsRef.current, interimRef.current);
       let audioBase64: string | undefined;
       let audioMime: string | undefined;
       if (blob.size > 0 && blob.size <= MAX_AUDIO_BYTES && durationMs >= 250) {
@@ -283,6 +288,7 @@ export function ComeThroughSession({ code, displayName }: { code: string; displa
     } finally {
       setHoldMs(0);
       setInterim("");
+      interimRef.current = "";
     }
   };
   const cancelDraft = () => {
