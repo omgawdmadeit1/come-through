@@ -68,6 +68,7 @@ export function ComeThroughSession({ code, displayName }: { code: string; displa
   const finalsRef = useRef("");
   const playQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pointerActiveRef = useRef(false);
+  const endHoldInFlightRef = useRef(false);
   const connectedPeer = useMemo(
     () => p2p.peers.find((p) => p.connectionState === "connected") ?? null,
     [p2p.peers],
@@ -238,12 +239,19 @@ export function ComeThroughSession({ code, displayName }: { code: string; displa
     }
   };
   const endHold = async () => {
+    // pointerup + pointerleave (or cancel) both fire on a normal release.
+    // Without a single-flight guard the second call hits recorder.stop()
+    // after mediaRecorder is already cleared, rejects "not recording", and
+    // the catch resets phase to idle — wiping a successful review draft.
+    if (endHoldInFlightRef.current) return;
     if (!pointerActiveRef.current && phase !== "holding") return;
+    endHoldInFlightRef.current = true;
     pointerActiveRef.current = false;
     clearHoldTimers();
     stopRecognition();
     if (phase !== "holding") {
       setPhase("idle");
+      endHoldInFlightRef.current = false;
       return;
     }
     try {
@@ -283,6 +291,7 @@ export function ComeThroughSession({ code, displayName }: { code: string; displa
     } finally {
       setHoldMs(0);
       setInterim("");
+      endHoldInFlightRef.current = false;
     }
   };
   const cancelDraft = () => {
@@ -325,18 +334,18 @@ export function ComeThroughSession({ code, displayName }: { code: string; displa
       hasAudio: Boolean(payload.audioBase64),
     };
     setThread((prev) => [item, ...prev].slice(0, 40));
-    try {
-      p2p.send(payload);
-      setThread((prev) => prev.map((x) => (x.id === id ? { ...x, status: "sent" } : x)));
-      setDraft(null);
-      setPhase("idle");
-      void hapticMedium();
-      toast.success("Cut in sent");
-    } catch {
+    const delivered = p2p.send(payload);
+    if (!delivered) {
       setThread((prev) => prev.map((x) => (x.id === id ? { ...x, status: "failed" } : x)));
       setPhase("review");
       toast.error("Send failed — stay on this screen and try again.");
+      return;
     }
+    setThread((prev) => prev.map((x) => (x.id === id ? { ...x, status: "sent" } : x)));
+    setDraft(null);
+    setPhase("idle");
+    void hapticMedium();
+    toast.success("Cut in sent");
   };
   const sendTypedOnly = async () => {
     if (phase === "review" && draft) {

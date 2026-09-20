@@ -41,6 +41,21 @@ export interface PeerInfo {
   rttMs: number | null;
 }
 
+/** Send `wire` on each open reliable channel. Returns how many peers accepted it. */
+export function sendOnOpenReliable(
+  targets: Array<{ reliable?: { readyState: string; send: (data: string) => void } } | undefined>,
+  wire: string,
+): number {
+  let sent = 0;
+  for (const slot of targets) {
+    if (slot?.reliable?.readyState === "open") {
+      slot.reliable.send(wire);
+      sent += 1;
+    }
+  }
+  return sent;
+}
+
 export interface P2PRoomOptions {
   room: string;
   selfId: string;
@@ -154,13 +169,16 @@ export class P2PRoom {
     }
   }
 
-  /** Send reliably (ordered) to one peer, or to all when peerId is omitted. */
-  send(data: unknown, peerId?: string): void {
+  /**
+   * Send reliably (ordered) to one peer, or to all when peerId is omitted.
+   * Returns true only if at least one open reliable channel accepted the payload.
+   * ICE `connected` is not enough — a closed/connecting data channel would
+   * otherwise drop the cut-in while the UI still said "sent".
+   */
+  send(data: unknown, peerId?: string): boolean {
     const wire = JSON.stringify({ t: "d", d: data });
     const targets = peerId ? [this.peers.get(peerId)] : [...this.peers.values()];
-    for (const slot of targets) {
-      if (slot?.reliable?.readyState === "open") slot.reliable.send(wire);
-    }
+    return sendOnOpenReliable(targets, wire) > 0;
   }
 
   peerList(): PeerInfo[] {
