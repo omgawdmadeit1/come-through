@@ -16,7 +16,7 @@ export interface P2PRoomHandle {
   peers: PeerInfo[];
   joined: boolean;
   broadcast: (data: unknown) => void;
-  send: (data: unknown, peerId?: string) => void;
+  send: (data: unknown, peerId?: string) => boolean;
   onMessage: (
     fn: (from: string, data: unknown, channel: "state" | "reliable") => void,
   ) => () => void;
@@ -58,7 +58,7 @@ export function useP2PRoom(options: UseP2PRoomOptions): P2PRoomHandle {
 
   const broadcast = useCallback((data: unknown) => roomRef.current?.broadcast(data), []);
   const send = useCallback(
-    (data: unknown, peerId?: string) => roomRef.current?.send(data, peerId),
+    (data: unknown, peerId?: string) => roomRef.current?.send(data, peerId) ?? false,
     [],
   );
   const onMessage = useCallback(
