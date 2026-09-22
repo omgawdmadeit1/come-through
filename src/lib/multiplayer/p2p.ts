@@ -81,6 +81,21 @@ const STALL_MS = 10_000;
 const MAX_RECOVERY_ATTEMPTS = 3;
 const SIGNAL_RETRY_DELAYS_MS = [250, 750];
 
+/**
+ * A still-working WebRTC pair must survive a missing signaling roster row.
+ * iOS / Safari pause timers in the background, so a 30s peer TTL can expire
+ * while ICE is still connected. Closing the pc then drops cut-ins and
+ * shows "Waiting for the other phone" even though the path was live.
+ * The same path is how an unauthenticated POST /api/rtc leave instantly
+ * evicts a partner who never left.
+ */
+export function shouldKeepMissingRosterPeer(
+  connectionState: RTCPeerConnectionState,
+  channelOpen: boolean,
+): boolean {
+  return connectionState === "connected" || channelOpen;
+}
+
 export function defaultIceServers(): RTCIceServer[] {
   const urls = (import.meta.env.VITE_STUN_URLS as string | undefined)
     ?.split(",")
@@ -103,6 +118,7 @@ export class P2PRoom {
   private cursor = 0;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private visibilityHandler: (() => void) | null = null;
   private closed = false;
   private everPolled = false;
   private lastPeersFingerprint = "";
@@ -128,12 +144,22 @@ export class P2PRoom {
       this.pingAll();
       this.watchdog();
     }, PING_INTERVAL_MS);
+    if (typeof document !== "undefined") {
+      this.visibilityHandler = () => {
+        if (document.visibilityState === "visible" && !this.closed) void this.poll();
+      };
+      document.addEventListener("visibilitychange", this.visibilityHandler);
+    }
   }
 
   close(): void {
     this.closed = true;
     if (this.pollTimer) clearTimeout(this.pollTimer);
     if (this.pingTimer) clearInterval(this.pingTimer);
+    if (this.visibilityHandler && typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.visibilityHandler);
+      this.visibilityHandler = null;
+    }
     for (const slot of this.peers.values()) slot.pc.close();
     this.peers.clear();
     // Leaving the roster is the teardown broadcast: everyone's next poll
@@ -233,10 +259,13 @@ export class P2PRoom {
       }
     }
     for (const [id, slot] of this.peers) {
-      if (!alive.has(id)) {
-        slot.pc.close();
-        this.peers.delete(id);
-      }
+      if (alive.has(id)) continue;
+      const live = slot.pc.connectionState;
+      const channelOpen =
+        slot.reliable?.readyState === "open" || slot.state?.readyState === "open";
+      if (shouldKeepMissingRosterPeer(live, channelOpen)) continue;
+      slot.pc.close();
+      this.peers.delete(id);
     }
     this.emitPeers();
   }
