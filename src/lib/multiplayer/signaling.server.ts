@@ -19,7 +19,9 @@ const signalSchema = z.object({
 const leaveSchema = z.object({ op: z.literal("leave"), room: ID, peer: ID });
 const postSchema = z.discriminatedUnion("op", [signalSchema, leaveSchema]);
 
-const PEER_TTL_SECONDS = 30;
+// iOS / Safari throttle (or pause) background timers, so a 30s TTL expires
+// while a phone is locked even though WebRTC may still be connected.
+const PEER_TTL_SECONDS = 180;
 const SIGNAL_TTL_SECONDS = 60;
 
 const globalRef = globalThis as typeof globalThis & {
@@ -155,6 +157,10 @@ async function handlePost(request: Request): Promise<Response> {
   await ensureSchema(sql);
 
   if (msg.op === "signal") {
+    const senders = await roster(sql, msg.room);
+    if (!senders.some((p) => p.id === msg.from)) {
+      return json({ error: "unknown sender" }, 409);
+    }
     await sql.query(
       `INSERT INTO webrtc_signals (room, to_peer, from_peer, kind, payload)
        VALUES ($1, $2, $3, $4, $5)`,
